@@ -26,12 +26,10 @@ use burn::{
 };
 use std::sync::Arc;
 
-// Define configuration struct for the experiment
 #[derive(Config)]
 pub struct ExperimentConfig {
     pub transformer: TransformerEncoderConfig,
     pub optimizer: AdamConfig,
-    //#[config(default = 512)]
     #[config(default = 256)]
     pub max_seq_length: usize,
     #[config(default = 32)]
@@ -57,6 +55,7 @@ pub fn train<B: AutodiffBackend, D: TextClassificationDataset + 'static>(
         devices[0].clone(),
         config.max_seq_length,
     );
+
     let batcher_test = TextClassificationBatcher::<B::InnerBackend>::new(
         tokenizer.clone(),
         devices[0].clone(),
@@ -69,14 +68,14 @@ pub fn train<B: AutodiffBackend, D: TextClassificationDataset + 'static>(
         D::num_classes(),
         tokenizer.vocab_size(),
         config.max_seq_length,
-    )
-        .init(&devices[0]);
+    ).init(&devices[0]);
 
     // Initialize data loaders for training and testing data
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
         .num_workers(1)
         .build(SamplerDataset::new(dataset_train, 50_000));
+
     let dataloader_test = DataLoaderBuilder::new(batcher_test)
         .batch_size(config.batch_size)
         .num_workers(1)

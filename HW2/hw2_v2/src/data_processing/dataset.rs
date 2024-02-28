@@ -1,15 +1,19 @@
-// The AgNewsDataset and DbPediaDataset structs are examples of specific text
-// classification datasets.  Each dataset struct has a field for the underlying
-// SQLite dataset and implements methods for accessing and processing the data.
-// Each dataset is also provided with specific information about its classes via
-// the TextClassificationDataset trait. These implementations are designed to be used
-// with a machine learning framework for tasks such as training a text classification model.
+
+// AgNewsDataset структура являются примером конкретного набора данных классификации текста.
+// Каждая структура набора данных имеет поле для базового набора данных SQLite и реализует методы
+// для доступа и обработки данных. Каждому набору данных также предоставляется специфическая информация
+// о его классах через трейт TextClassificationDataset. Эти реализации предназначены для использования
+// с фреймворком машинного обучения для задач, таких как обучение модели классификации текста.
+
 
 use burn::data::dataset::{source::huggingface::HuggingfaceDatasetLoader, Dataset, SqliteDataset};
 use derive_new::new;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 use strum_macros::{EnumCount, EnumIter};
+
+
+
 
 // Структура для элементов классификации текста
 #[derive(new, Clone, Debug)]
@@ -18,10 +22,12 @@ pub struct TextClassificationItem {
     pub label: usize, // Метка текста (категория классификации)
 }
 
+
 // Трейт для наборов данных классификации текста
 pub trait TextClassificationDataset: Dataset<TextClassificationItem> {
     fn num_classes() -> usize; // Возвращает количество уникальных классов в наборе данных
-    fn class_name(label: usize) -> String; // Возвращает имя класса по его метке
+    //fn class_name(label: usize) -> String; // Возвращает имя класса по его метке
+    fn class_name(label: AgNewsDatasetClasses) -> String; // Возвращает имя класса по его метке
 }
 
 // Структура для элементов набора данных AG News
@@ -71,12 +77,12 @@ impl AgNewsDataset {
 
     /// Конструирует набор данных из раздела (либо "train", либо "test")
     pub fn new(split: DatasetSplit) -> Self {
-        let split_str = match split {
+        let split = match split {
             DatasetSplit::Train => "train",
             DatasetSplit::Test => "test",
         };
         let dataset: SqliteDataset<AgNewsItem> = HuggingfaceDatasetLoader::new("ag_news")
-            .dataset(split_str)
+            .dataset(split)
             .unwrap();
         Self { dataset }
     }
@@ -99,13 +105,13 @@ impl TextClassificationDataset for AgNewsDataset {
     }
 
     /// Возвращает имя класса по его метке
-    fn class_name(label: usize) -> String {
+    fn class_name(label: AgNewsDatasetClasses) -> String {
         match label {
-            0 => "World",
-            1 => "Sports",
-            2 => "Business",
-            3 => "Technology",
-            _ => panic!("invalid class"),
-        }.to_string()
+            AgNewsDatasetClasses::World => "World",
+            AgNewsDatasetClasses::Sports => "Sports",
+            AgNewsDatasetClasses::Business => "Business",
+            AgNewsDatasetClasses::Technology => "Technology",
+        }
+        .to_string()
     }
 }

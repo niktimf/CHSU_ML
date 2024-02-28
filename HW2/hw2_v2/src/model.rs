@@ -1,7 +1,5 @@
-// This is a basic text classification model implemented in Rust using the Burn framework.
-// It uses a Transformer as the base model and applies Linear and Embedding layers.
-// The model is then trained using Cross-Entropy loss. It contains methods for model initialization
-// (both with and without pre-trained weights), forward pass, inference, training, and validation.
+
+// Это базовая модель классификации текста, реализованная на Rust с использованием фреймворка Burn.
 
 use crate::data_processing::{TextClassificationInferenceBatch, TextClassificationTrainingBatch};
 use burn::{
@@ -16,17 +14,177 @@ use burn::{
     tensor::{activation::softmax, Tensor},
     train::{ClassificationOutput, TrainOutput, TrainStep, ValidStep},
 };
+use burn::nn::Lstm;
+use burn::tensor::{Bool, Device, Int, TensorKind};
+use derive_new::new;
 
-// Define the model configuration
-#[derive(Config)]
-pub struct TextClassificationModelConfig {
-    transformer: TransformerEncoderConfig,
+#[derive(Module, Debug)]
+pub struct TextClassificationTransformerModel<B: Backend> {
+    model: TransformerEncoder<B>,
+    embedding_token: Embedding<B>,
+    embedding_pos: Embedding<B>,
+    output: Linear<B>,
     n_classes: usize,
-    vocab_size: usize,
     max_seq_length: usize,
 }
 
-// Define the model structure
+pub trait ModelOperations<B: Backend> {
+    fn forward(&self, item: TextClassificationTrainingBatch<B>) -> ClassificationOutput<B>;
+    fn inference(&self, item: TextClassificationInferenceBatch<B>) -> Tensor<B, 2>;
+    fn prepare_embeddings<const D: usize>(&self, tokens: Tensor<B, 2, Int>, seq_length: usize, batch_size: usize, device: &Device<B>) -> Tensor<B, 3>;
+    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Tensor<B, 2, Bool>) -> Tensor<B, 3>;
+    fn transform_output_tensor(&self, output: Tensor<B, 2>, batch_size: usize) -> Tensor<B, 2>;
+}
+
+impl <B: Backend> ModelOperations<B> for TextClassificationTransformerModel<B> {
+    fn forward(&self, item: TextClassificationTrainingBatch<B>) -> ClassificationOutput<B> {
+
+        // Получаем размер пакета и длину последовательности, а также устройство
+        let [batch_size, seq_length] = item.tokens.dims();
+        let device = &self.embedding_token.devices()[0];
+
+        // Перемещаем тензоры на устройство
+        let tokens = item.tokens.to_device(device);
+        let labels = item.labels.to_device(device);
+        let mask_pad = item.mask_pad.to_device(device);
+
+        // Вычисляем токен и позиционные эмбеддинги, и объединяем их
+        let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
+        let encoded = self.encode(embedding, mask_pad);
+        let output = self.output.forward(encoded);
+
+        let output_classification = self.transform_output_tensor(output, batch_size);
+
+        let loss = CrossEntropyLossConfig::new()
+            .init(&output_classification.device())
+            .forward(output_classification.clone(), labels.clone());
+
+        // Возвращаем loss и выход
+        ClassificationOutput {
+            loss,
+            output: output_classification,
+            targets: labels,
+        }
+    }
+
+    fn inference(&self, item: TextClassificationInferenceBatch<B>) -> Tensor<B, 2> {
+
+        // Получаем размер пакета и длину последовательности, а также устройство
+        let [batch_size, seq_length] = item.tokens.dims();
+        let device = &self.embedding_token.devices()[0];
+
+        // Перемещаем тензоры на устройство
+        let tokens = item.tokens.to_device(device);
+        let mask_pad = item.mask_pad.to_device(device);
+
+        // Вычисляем токен и позиционные эмбеддинги, и объединяем их
+        let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
+        let encoded = self.encode(embedding, mask_pad);
+        let output = self.output.forward(encoded);
+
+        let output = self.transform_output_tensor(output, batch_size);
+
+        softmax(output, 1)
+    }
+
+    fn prepare_embeddings<const D: usize>(&self, tokens: Tensor<B, 2, Int>, seq_length: usize, batch_size: usize, device: &Device<B>) -> Tensor<B, 3> {
+        let index_positions = Tensor::arange(0..seq_length, device)
+            .reshape([1, seq_length])
+            .repeat(0, batch_size);
+        let embedding_positions = self.embedding_pos.forward(index_positions);
+        let embedding_tokens = self.embedding_token.forward(tokens);
+        (embedding_positions + embedding_tokens) / 2
+    }
+
+    // Кодирование с использованием трансформатора
+    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Tensor<B, 2, Bool>) -> Tensor<B, 3> {
+        self.model.forward(TransformerEncoderInput::new(embedding).mask_pad(mask_pad))
+    }
+
+    fn transform_output_tensor(&self, output: Tensor<B, 3>, batch_size: usize) -> Tensor<B, 2> {
+        output
+            .slice([0..batch_size, 0..1])
+            .reshape([batch_size, self.n_classes])
+    }
+}
+
+#[derive(Module, Debug)]
+pub struct TextClassificationLstmModel<B: Backend> {
+    model: Lstm<B>,
+    embedding_token: Embedding<B>,
+    embedding_pos: Embedding<B>,
+    output: Linear<B>,
+    n_classes: usize,
+    max_seq_length: usize,
+}
+
+impl <B: Backend> ModelOperations<B> for TextClassificationLstmModel<B> {
+    fn forward(&self, item: TextClassificationTrainingBatch<B>) -> ClassificationOutput<B> {
+
+        // Получаем размер пакета и длину последовательности, а также устройство
+        let [batch_size, seq_length] = item.tokens.dims();
+        let device = &self.embedding_token.devices()[0];
+
+        // Перемещаем тензоры на устройство
+        let tokens = item.tokens.to_device(device);
+        let labels = item.labels.to_device(device);
+        let mask_pad = item.mask_pad.to_device(device);
+
+        // Вычисляем токен и позиционные эмбеддинги, и объединяем их
+        let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
+        let encoded = self.encode(embedding, mask_pad);
+        let output = self.output.forward(encoded);
+
+        let output_classification = self.transform_output_tensor(output, batch_size);
+
+        let loss = CrossEntropyLossConfig::new()
+            .init(&output_classification.device())
+            .forward(output_classification.clone(), labels.clone());
+
+        // Возвращаем loss и выход
+        ClassificationOutput {
+            loss,
+            output: output_classification,
+            targets: labels,
+        }
+    }
+
+    fn inference(&self, item: TextClassificationInferenceBatch<B>) -> Tensor<B, 2> {
+
+        // Получаем размер пакета и длину последовательности, а также устройство
+        let [batch_size, seq_length] = item.tokens.dims();
+        let device = &self.embedding_token.devices()[0];
+
+        // Перемещаем тензоры на устройство
+        let tokens = item.tokens.to_device(device);
+        let mask_pad = item.mask_pad.to_device(device);
+
+        // Вычисляем токен и позиционные эмбеддинги, и объединяем их
+        let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
+        let encoded = self.encode(embedding, mask_pad);
+        let output = self.output.forward(encoded);
+
+        let output = self.transform_output_tensor(output, batch_size);
+
+        softmax(output, 1)
+    }
+
+    fn prepare_embeddings<const D: usize>(&self, tokens: Tensor<B, Int, 2>, seq_length: usize, batch_size: usize, device: &Device<B>) -> Tensor<B, 3> {
+        todo!()
+    }
+
+    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Tensor<B, Bool, 2>) -> Tensor<B, 3> {
+        todo!()
+    }
+
+    fn transform_output_tensor(&self, output: Tensor<B, 2>, batch_size: usize) -> Tensor<B, 2> {
+        todo!()
+    }
+}
+
+
+/*
+// Структура модели
 #[derive(Module, Debug)]
 pub struct TextClassificationModel<B: Backend> {
     transformer: TransformerEncoder<B>,
@@ -37,9 +195,95 @@ pub struct TextClassificationModel<B: Backend> {
     max_seq_length: usize,
 }
 
-// Define functions for model initialization
+
+/// Поведение модели
+impl<B: Backend> TextClassificationModel<B> {
+    // Forward pass для обучения
+    pub fn forward(&self, item: TextClassificationTrainingBatch<B>) -> ClassificationOutput<B> {
+        // Получаем размер пакета и длину последовательности, а также устройство
+        let [batch_size, seq_length] = item.tokens.dims();
+        let device = &self.embedding_token.devices()[0];
+
+        // Перемещаем тензоры на устройство
+        let tokens = item.tokens.to_device(device);
+        let labels = item.labels.to_device(device);
+        let mask_pad = item.mask_pad.to_device(device);
+
+        // Вычисляем токен и позиционные эмбеддинги, и объединяем их
+        let index_positions = Tensor::arange(0..seq_length, device)
+            .reshape([1, seq_length])
+            .repeat(0, batch_size);
+        let embedding_positions = self.embedding_pos.forward(index_positions);
+        let embedding_tokens = self.embedding_token.forward(tokens);
+        let embedding = (embedding_positions + embedding_tokens) / 2;
+
+        // Производим кодирование трансформатором, вычисляем выход и loss
+        let encoded = self
+            .transformer
+            .forward(TransformerEncoderInput::new(embedding).mask_pad(mask_pad));
+        let output = self.output.forward(encoded);
+
+        let output_classification = output
+            .slice([0..batch_size, 0..1])
+            .reshape([batch_size, self.n_classes]);
+
+        let loss = CrossEntropyLossConfig::new()
+            .init(&output_classification.device())
+            .forward(output_classification.clone(), labels.clone());
+
+        // Возвращаем loss и выход
+        ClassificationOutput {
+            loss,
+            output: output_classification,
+            targets: labels,
+        }
+    }
+
+    /// Forward pass для инференса
+    pub fn infer(&self, item: TextClassificationInferenceBatch<B>) -> Tensor<B, 2> {
+
+        // Получаем размер пакета и длину последовательности, а также устройство
+        let [batch_size, seq_length] = item.tokens.dims();
+        let device = &self.embedding_token.devices()[0];
+
+        // Перемещаем тензоры на устройство
+        let tokens = item.tokens.to_device(device);
+        let mask_pad = item.mask_pad.to_device(device);
+
+        // Вычисляем токен и позиционные эмбеддинги, и объединяем их
+        let index_positions = Tensor::arange(0..seq_length, device)
+            .reshape([1, seq_length])
+            .repeat(0, batch_size);
+
+        let embedding_positions = self.embedding_pos.forward(index_positions);
+        let embedding_tokens = self.embedding_token.forward(tokens);
+        let embedding = (embedding_positions + embedding_tokens) / 2;
+
+        // Производим кодирование трансформатором, вычисляем выход и применяем softmax для предсказания
+        let encoded = self
+            .transformer
+            .forward(TransformerEncoderInput::new(embedding).mask_pad(mask_pad));
+        let output = self.output.forward(encoded);
+        let output = output
+            .slice([0..batch_size, 0..1])
+            .reshape([batch_size, self.n_classes]);
+
+        softmax(output, 1)
+    }
+}
+
+// Конфигурация модели
+#[derive(Config)]
+pub struct TextClassificationModelConfig {
+    transformer: TransformerEncoderConfig,
+    n_classes: usize,
+    vocab_size: usize,
+    max_seq_length: usize,
+}
+
+// Функции инициализации модели
 impl TextClassificationModelConfig {
-    /// Initializes a model with default weights
+    /// Инициализация модели с пустыми весами
     pub fn init<B: Backend>(&self, device: &B::Device) -> TextClassificationModel<B> {
         let output = LinearConfig::new(self.transformer.d_model, self.n_classes).init(device);
         let transformer = self.transformer.init(device);
@@ -58,7 +302,7 @@ impl TextClassificationModelConfig {
         }
     }
 
-    /// Initializes a model with provided weights
+    /// Инициализация модели с загруженными весами
     pub fn init_with<B: Backend>(
         &self,
         record: TextClassificationModelRecord<B>,
@@ -82,91 +326,14 @@ impl TextClassificationModelConfig {
     }
 }
 
-/// Define model behavior
-impl<B: Backend> TextClassificationModel<B> {
-    // Defines forward pass for training
-    pub fn forward(&self, item: TextClassificationTrainingBatch<B>) -> ClassificationOutput<B> {
-        // Get batch and sequence length, and the device
-        let [batch_size, seq_length] = item.tokens.dims();
-        let device = &self.embedding_token.devices()[0];
-
-        // Move tensors to the correct device
-        let tokens = item.tokens.to_device(device);
-        let labels = item.labels.to_device(device);
-        let mask_pad = item.mask_pad.to_device(device);
-
-        // Calculate token and position embeddings, and combine them
-        //let index_positions = Tensor::arange(0..seq_length as i64, device)
-        let index_positions = Tensor::arange(0..seq_length, device)
-            .reshape([1, seq_length])
-            .repeat(0, batch_size);
-        let embedding_positions = self.embedding_pos.forward(index_positions);
-        let embedding_tokens = self.embedding_token.forward(tokens);
-        let embedding = (embedding_positions + embedding_tokens) / 2;
-
-        // Perform transformer encoding, calculate output and loss
-        let encoded = self
-            .transformer
-            .forward(TransformerEncoderInput::new(embedding).mask_pad(mask_pad));
-        let output = self.output.forward(encoded);
-
-        let output_classification = output
-            .slice([0..batch_size, 0..1])
-            .reshape([batch_size, self.n_classes]);
-
-        let loss = CrossEntropyLossConfig::new()
-            .init(&output_classification.device())
-            .forward(output_classification.clone(), labels.clone());
-
-        // Return the output and loss
-        ClassificationOutput {
-            loss,
-            output: output_classification,
-            targets: labels,
-        }
-    }
-
-    /// Defines forward pass for inference
-    pub fn infer(&self, item: TextClassificationInferenceBatch<B>) -> Tensor<B, 2> {
-        // Get batch and sequence length, and the device
-        let [batch_size, seq_length] = item.tokens.dims();
-        let device = &self.embedding_token.devices()[0];
-
-        // Move tensors to the correct device
-        let tokens = item.tokens.to_device(device);
-        let mask_pad = item.mask_pad.to_device(device);
-
-        // Calculate token and position embeddings, and combine them
-        //let index_positions = Tensor::arange(0..seq_length as i64), device)
-        let index_positions = Tensor::arange(0..seq_length, device)
-            .reshape([1, seq_length])
-            .repeat(0, batch_size);
-        let embedding_positions = self.embedding_pos.forward(index_positions);
-        let embedding_tokens = self.embedding_token.forward(tokens);
-        let embedding = (embedding_positions + embedding_tokens) / 2;
-
-        // Perform transformer encoding, calculate output and apply softmax for prediction
-        let encoded = self
-            .transformer
-            .forward(TransformerEncoderInput::new(embedding).mask_pad(mask_pad));
-        let output = self.output.forward(encoded);
-        let output = output
-            .slice([0..batch_size, 0..1])
-            .reshape([batch_size, self.n_classes]);
-
-        softmax(output, 1)
-    }
-}
-
-/// Define training step
+/// Определение шага обучения
 impl<B: AutodiffBackend> TrainStep<TextClassificationTrainingBatch<B>, ClassificationOutput<B>>
-for TextClassificationModel<B>
-{
+for TextClassificationModel<B> {
     fn step(
         &self,
         item: TextClassificationTrainingBatch<B>,
     ) -> TrainOutput<ClassificationOutput<B>> {
-        // Run forward pass, calculate gradients and return them along with the output
+        // Выполняем прямой проход, вычисляем градиенты и возвращаем их вместе с выходом
         let item = self.forward(item);
         let grads = item.loss.backward();
 
@@ -174,12 +341,20 @@ for TextClassificationModel<B>
     }
 }
 
-/// Define validation step
+/// Определение шага валидации
 impl<B: Backend> ValidStep<TextClassificationTrainingBatch<B>, ClassificationOutput<B>>
-for TextClassificationModel<B>
-{
+for TextClassificationModel<B> {
     fn step(&self, item: TextClassificationTrainingBatch<B>) -> ClassificationOutput<B> {
-        // Run forward pass and return the output
+        // Выполняем прямой проход и возвращаем выход
         self.forward(item)
     }
 }
+
+ */
+
+
+
+
+
+
+

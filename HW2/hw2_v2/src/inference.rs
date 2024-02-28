@@ -16,6 +16,7 @@ use burn::{
     tensor::backend::Backend,
 };
 use std::sync::Arc;
+use crate::data_processing::AgNewsDatasetClasses;
 
 // Define inference function
 pub fn infer<B: Backend, D: TextClassificationDataset + 'static>(
@@ -61,30 +62,20 @@ pub fn infer<B: Backend, D: TextClassificationDataset + 'static>(
     let item = batcher.batch(samples.clone()); // Batch samples using the batcher
     let predictions = model.infer(item); // Get model predictions
 
-    /*
-    // Print out predictions for each sample
-    for (i, text) in samples.into_iter().enumerate() {
-        #[allow(clippy::single_range_in_vec_init)]
-            let prediction = predictions.clone().slice([i..i + 1]); // Get prediction for current sample
-        let logits = prediction.to_data(); // Convert prediction tensor to data
-        let class_index = prediction.argmax(1).into_data().convert::<i32>().value[0]; // Get class index with the highest value
-        let class = D::class_name(class_index as usize); // Get class name
-
-        // Print sample text, predicted logits and predicted class
-        println!(
-            "\n=== Item {i} ===\n- Text: {text}\n- Logits: {logits}\n- Prediction: \
-             {class}\n================"
-        );
-    }
-
-     */
-
     // Print out predictions for each sample
     samples.into_iter().enumerate().for_each(|(i, text)| {
         let prediction = predictions.clone().slice([i..i + 1]); // Get prediction for current sample
         let logits = prediction.to_data(); // Convert prediction tensor to data
         let class_index = prediction.argmax(1).into_data().convert::<i32>().value[0]; // Get class index with the highest value
-        let class = D::class_name(class_index as usize); // Get class name
+        let class_name = match class_index {
+            0 => AgNewsDatasetClasses::World,
+            1 => AgNewsDatasetClasses::Sports,
+            2 => AgNewsDatasetClasses::Business,
+            3 => AgNewsDatasetClasses::Technology,
+            _ => panic!("Invalid class index"),
+        };
+
+        let class = D::class_name(class_name); // Get class name
 
         // Print sample text, predicted logits and predicted class
         println!(
