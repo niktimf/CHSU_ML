@@ -1,3 +1,4 @@
+#![feature(associated_type_defaults)]
 
 mod data_processing;
 mod model;

@@ -32,8 +32,8 @@ pub trait ModelOperations<B: Backend> {
     fn forward(&self, item: TextClassificationTrainingBatch<B>) -> ClassificationOutput<B>;
     fn inference(&self, item: TextClassificationInferenceBatch<B>) -> Tensor<B, 2>;
     fn prepare_embeddings<const D: usize>(&self, tokens: Tensor<B, 2, Int>, seq_length: usize, batch_size: usize, device: &Device<B>) -> Tensor<B, 3>;
-    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Tensor<B, 2, Bool>) -> Tensor<B, 3>;
-    fn transform_output_tensor(&self, output: Tensor<B, 2>, batch_size: usize) -> Tensor<B, 2>;
+    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3>;
+    fn transform_output_tensor(&self, output: Tensor<B, 3>, batch_size: usize) -> Tensor<B, 2>;
 }
 
 impl <B: Backend> ModelOperations<B> for TextClassificationTransformerModel<B> {
@@ -50,7 +50,7 @@ impl <B: Backend> ModelOperations<B> for TextClassificationTransformerModel<B> {
 
         // Вычисляем токен и позиционные эмбеддинги, и объединяем их
         let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
-        let encoded = self.encode(embedding, mask_pad);
+        let encoded = self.encode(embedding, Some(mask_pad));
         let output = self.output.forward(encoded);
 
         let output_classification = self.transform_output_tensor(output, batch_size);
@@ -78,11 +78,10 @@ impl <B: Backend> ModelOperations<B> for TextClassificationTransformerModel<B> {
         let mask_pad = item.mask_pad.to_device(device);
 
         // Вычисляем токен и позиционные эмбеддинги, и объединяем их
-        let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
-        let encoded = self.encode(embedding, mask_pad);
-        let output = self.output.forward(encoded);
-
-        let output = self.transform_output_tensor(output, batch_size);
+        let embedding: Tensor<B, 3> = self.prepare_embeddings(tokens, seq_length, batch_size, device);
+        let encoded: Tensor<B, 3> = self.encode(embedding, Some(mask_pad));
+        let output: Tensor<B, 3> = self.output.forward(encoded);
+        let output: Tensor<B, 2> = self.transform_output_tensor(output, batch_size);
 
         softmax(output, 1)
     }
@@ -97,9 +96,11 @@ impl <B: Backend> ModelOperations<B> for TextClassificationTransformerModel<B> {
     }
 
     // Кодирование с использованием трансформатора
-    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Tensor<B, 2, Bool>) -> Tensor<B, 3> {
+    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3> {
+        let Some(mask_pad) = mask_pad;
         self.model.forward(TransformerEncoderInput::new(embedding).mask_pad(mask_pad))
     }
+
 
     fn transform_output_tensor(&self, output: Tensor<B, 3>, batch_size: usize) -> Tensor<B, 2> {
         output
@@ -132,7 +133,7 @@ impl <B: Backend> ModelOperations<B> for TextClassificationLstmModel<B> {
 
         // Вычисляем токен и позиционные эмбеддинги, и объединяем их
         let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
-        let encoded = self.encode(embedding, mask_pad);
+        let encoded = self.encode(embedding, None);
         let output = self.output.forward(encoded);
 
         let output_classification = self.transform_output_tensor(output, batch_size);
@@ -160,27 +161,38 @@ impl <B: Backend> ModelOperations<B> for TextClassificationLstmModel<B> {
         let mask_pad = item.mask_pad.to_device(device);
 
         // Вычисляем токен и позиционные эмбеддинги, и объединяем их
-        let embedding = self.prepare_embeddings(tokens, seq_length, batch_size, device);
-        let encoded = self.encode(embedding, mask_pad);
-        let output = self.output.forward(encoded);
+        let embedding: Tensor<B, 3> = self.prepare_embeddings(tokens, seq_length, batch_size, device);
+        let encoded: Tensor<B, 3> = self.encode(embedding, None);
+        let output: Tensor<B, 3> = self.output.forward(encoded);
 
-        let output = self.transform_output_tensor(output, batch_size);
+        let output: Tensor<B, 2> = self.transform_output_tensor(output, batch_size);
 
         softmax(output, 1)
     }
 
-    fn prepare_embeddings<const D: usize>(&self, tokens: Tensor<B, Int, 2>, seq_length: usize, batch_size: usize, device: &Device<B>) -> Tensor<B, 3> {
-        todo!()
+    fn prepare_embeddings<const D: usize>(&self, tokens: Tensor<B, 2, Int>, seq_length: usize, batch_size: usize, device: &Device<B>) -> Tensor<B, 3> {
+        let index_positions = Tensor::arange(0..seq_length, device)
+            .reshape([1, seq_length])
+            .repeat(0, batch_size);
+        let embedding_positions = self.embedding_pos.forward(index_positions);
+        let embedding_tokens = self.embedding_token.forward(tokens);
+        (embedding_positions + embedding_tokens) / 2
     }
 
-    fn encode(&self, embedding: Tensor<B, 3>, mask_pad: Tensor<B, Bool, 2>) -> Tensor<B, 3> {
-        todo!()
+    // Кодирование с использованием трансформатора
+    fn encode(&self, embedding: Tensor<B, 3>, _mask_pad: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3> {
+        let (output, _) = self.model.forward(embedding, None);
+        output
     }
 
-    fn transform_output_tensor(&self, output: Tensor<B, 2>, batch_size: usize) -> Tensor<B, 2> {
-        todo!()
+
+    fn transform_output_tensor(&self, output: Tensor<B, 3>, batch_size: usize) -> Tensor<B, 2> {
+        output
+            .slice([0..batch_size, 0..1])
+            .reshape([batch_size, self.n_classes])
     }
 }
+
 
 
 /*
