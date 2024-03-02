@@ -1,5 +1,5 @@
-mod dataset;
 mod batcher;
+mod dataset;
 mod tokenizer;
 
 pub use batcher::*;

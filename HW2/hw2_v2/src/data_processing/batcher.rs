@@ -1,4 +1,3 @@
-
 // Модуль определяет две структуры TextClassificationTrainingBatch и TextClassificationInferenceBatch для
 // обработки пакетов данных во время обучения и вывода соответственно. Структура TextClassificationBatcher
 // реализована для создания этих пакетов. Он параметризован типом B: Backend для поддержки различных
@@ -16,15 +15,15 @@ use burn::{
     nn::attention::generate_padding_mask,
     tensor::{backend::Backend, Bool, Data, ElementConversion, Int, Tensor},
 };
-use std::sync::Arc;
 use derive_new::new;
+use std::sync::Arc;
 
 /// Структура для упаковки элементов классификации текста
 #[derive(new)]
 pub struct TextClassificationBatcher<B: Backend> {
     tokenizer: Arc<dyn Tokenizer>, // Токенизатор для конвертации текста в токены
-    device: B::Device, // Вычислительное устройство для создания тензоров
-    max_seq_length: usize, // Максимальная длина для токенизированного текста
+    device: B::Device,             // Вычислительное устройство для создания тензоров
+    max_seq_length: usize,         // Максимальная длина для токенизированного текста
 }
 
 /// Структура для обучающего пакета в задаче классификации текста
@@ -44,7 +43,7 @@ pub struct TextClassificationInferenceBatch<B: Backend> {
 
 /// Реализация Batcher для TextClassificationBatcher для обучения
 impl<B: Backend> Batcher<TextClassificationItem, TextClassificationTrainingBatch<B>>
-for TextClassificationBatcher<B>
+    for TextClassificationBatcher<B>
 {
     /// Создает пакет обучения из вектора элементов
     fn batch(&self, items: Vec<TextClassificationItem>) -> TextClassificationTrainingBatch<B> {
@@ -79,7 +78,7 @@ for TextClassificationBatcher<B>
 
 /// Реализация Batcher для TextClassificationBatcher для инференса
 impl<B: Backend> Batcher<String, TextClassificationInferenceBatch<B>>
-for TextClassificationBatcher<B>
+    for TextClassificationBatcher<B>
 {
     /// Создает пакет вывода из вектора элементов
     fn batch(&self, items: Vec<String>) -> TextClassificationInferenceBatch<B> {

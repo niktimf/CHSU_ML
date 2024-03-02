@@ -1,4 +1,3 @@
-
 // Данный модуль обучает модель классификации текста с использованием предоставленных наборов данных
 // для обучения и тестирования, а также предоставленной конфигурации. Сначала инициализируется токенизатор
 // и батчеры для наборов данных, затем инициализируется модель и загрузчики данных для наборов данных.
@@ -7,14 +6,23 @@
 // и конфигурация затем сохраняются в указанный каталог.
 
 use crate::{
-    data_processing::{BertCasedTokenizer, TextClassificationBatcher, TextClassificationDataset, Tokenizer},
-    model::TextClassificationModelConfig,
+    data_processing::{
+        BertCasedTokenizer, TextClassificationBatcher, TextClassificationDataset, Tokenizer,
+    },
+    model::{TextClassificationLstmModelConfig, TextClassificationTransformerModelConfig},
 };
+use std::fmt::{Debug, Display};
+
+use crate::model::{LstmModelInitiation, TransformerModelInitiation};
+use burn::data::dataloader::batcher::Batcher;
+use burn::data::dataloader::{DataLoader, Dataset};
+use burn::tensor::backend::Backend;
 use burn::{
     config::Config,
     data::{dataloader::DataLoaderBuilder, dataset::transform::SamplerDataset},
     lr_scheduler::noam::NoamLrSchedulerConfig,
     module::Module,
+    nn::lstm::LstmConfig,
     nn::transformer::TransformerEncoderConfig,
     optim::AdamConfig,
     record::{CompactRecorder, Recorder},
@@ -27,7 +35,7 @@ use burn::{
 use std::sync::Arc;
 
 #[derive(Config)]
-pub struct ExperimentConfig {
+pub struct TransformerConfig {
     pub transformer: TransformerEncoderConfig,
     pub optimizer: AdamConfig,
     #[config(default = 256)]
@@ -37,15 +45,19 @@ pub struct ExperimentConfig {
     #[config(default = 5)]
     pub num_epochs: usize,
 }
-
 // Define train function
-pub fn train<B: AutodiffBackend, D: TextClassificationDataset + 'static>(
+pub fn train<B, D>(
     devices: Vec<B::Device>, // Device on which to perform computation (e.g., CPU or CUDA device)
     dataset_train: D,        // Training dataset
     dataset_test: D,         // Testing dataset
-    config: ExperimentConfig, // Experiment configuration
+    config: TransformerConfig, // Experiment configuration
     artifact_dir: &str,      // Directory to save model and config files
-) {
+) where
+    B: AutodiffBackend,
+    D: TextClassificationDataset + 'static,
+    // M: TransformerModelInitiation<B> + LstmModelInitiation<B> + 'static + Display
+    //M: ModelInit<B> + 'static + Display
+{
     // Initialize tokenizer
     let tokenizer = Arc::new(BertCasedTokenizer::default());
 
@@ -63,12 +75,13 @@ pub fn train<B: AutodiffBackend, D: TextClassificationDataset + 'static>(
     );
 
     // Initialize model
-    let model = TextClassificationModelConfig::new(
+    let model = TextClassificationTransformerModelConfig::new(
         config.transformer.clone(),
         D::num_classes(),
         tokenizer.vocab_size(),
         config.max_seq_length,
-    ).init(&devices[0]);
+    )
+    .init(&devices[0]);
 
     // Initialize data loaders for training and testing data
     let dataloader_train = DataLoaderBuilder::new(batcher_train)

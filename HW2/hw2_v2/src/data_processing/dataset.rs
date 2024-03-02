@@ -1,19 +1,14 @@
-
 // AgNewsDataset структура являются примером конкретного набора данных классификации текста.
 // Каждая структура набора данных имеет поле для базового набора данных SQLite и реализует методы
 // для доступа и обработки данных. Каждому набору данных также предоставляется специфическая информация
 // о его классах через трейт TextClassificationDataset. Эти реализации предназначены для использования
 // с фреймворком машинного обучения для задач, таких как обучение модели классификации текста.
 
-
 use burn::data::dataset::{source::huggingface::HuggingfaceDatasetLoader, Dataset, SqliteDataset};
 use derive_new::new;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 use strum_macros::{EnumCount, EnumIter};
-
-
-
 
 // Структура для элементов классификации текста
 #[derive(new, Clone, Debug)]
@@ -22,11 +17,10 @@ pub struct TextClassificationItem {
     pub label: usize, // Метка текста (категория классификации)
 }
 
-
 // Трейт для наборов данных классификации текста
 pub trait TextClassificationDataset: Dataset<TextClassificationItem> {
     fn num_classes() -> usize; // Возвращает количество уникальных классов в наборе данных
-    //fn class_name(label: usize) -> String; // Возвращает имя класса по его метке
+                               //fn class_name(label: usize) -> String; // Возвращает имя класса по его метке
     fn class_name(label: AgNewsDatasetClasses) -> String; // Возвращает имя класса по его метке
 }
 

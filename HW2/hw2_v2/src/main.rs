@@ -7,10 +7,9 @@ use burn::tensor::Tensor;
 use burn::nn::transformer::TransformerEncoderConfig;
 use burn::optim::{decay::WeightDecayConfig, AdamConfig};
 use burn::tensor::backend::AutodiffBackend;
-use hw2_v2::AgNewsDataset;
-use hw2_v2::training::ExperimentConfig;
 use hw2_v2::training;
-
+use hw2_v2::training::TransformerConfig;
+use hw2_v2::AgNewsDataset;
 
 #[cfg(not(feature = "f16"))]
 #[allow(dead_code)]
@@ -19,7 +18,7 @@ type ElemType = f32;
 type ElemType = burn::tensor::f16;
 
 pub fn launch<B: AutodiffBackend>(devices: Vec<B::Device>) {
-    let config = ExperimentConfig::new(
+    let config = TransformerConfig::new(
         TransformerEncoderConfig::new(256, 1024, 8, 4)
             .with_norm_first(true)
             .with_quiet_softmax(true),
@@ -34,7 +33,6 @@ pub fn launch<B: AutodiffBackend>(devices: Vec<B::Device>) {
         "/tmp/text-classification-ag-news",
     );
 }
-
 
 #[cfg(feature = "wgpu")]
 mod wgpu {
